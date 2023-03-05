@@ -154,6 +154,7 @@ def bscp(local_filename,
          debug=False,
          digest_save_name=None,
          digest_interval_save=600,
+         update_progress_interval=30,
     ):
     remote_filename_bytes = remote_filename.encode('utf-8')
     hashname_bytes = hashname.encode('ascii')
@@ -216,6 +217,9 @@ def bscp(local_filename,
             next_save_time = None
         changed = False
 
+        next_progress_time = time.time()
+        blocks_written = 0
+        blocks_skipped = 0
         with Progress() as progress:
             task1 = progress.add_task("[cyan]Total...", total=len(remote_digest_list))
             task2 = progress.add_task("[green]Written...", total=len(remote_digest_list))
@@ -224,14 +228,12 @@ def bscp(local_filename,
             for idx, remote_digest in enumerate(remote_digest_list):
                 position = f.tell()
                 pos_location=pos_location+1
-                progress.update(task1, advance=1)
 
                 block = f.read(blocksize)
                 hash_total.update(block)
                 digest = hashlib.new(hashname, block).digest()
                 if digest != remote_digest:
-                    progress.update(task2, advance=1)
-                    #sys.stderr.write('write block %i from %i\r' % (pos_location,blockcount))
+                    blocks_written += 1
                     try:
                         io.write(struct.pack('<Q', position))
                         io.write(block)
@@ -240,8 +242,15 @@ def bscp(local_filename,
                     remote_digest_list[idx] = digest
                     changed = True
                 else:
-                    progress.update(task3, advance=1)
-                    #sys.stderr.write('skip  block %i from %i\r' % (pos_location,blockcount))
+                    blocks_skipped += 1
+                if next_progress_time < int(time.time()):
+                    next_progress_time = int(time.time()) + update_progress_interval
+                    progress.update(task1, advance=(blocks_written + blocks_skipped))
+                    progress.update(task2, advance=blocks_written)
+                    progress.update(task3, advance=blocks_skipped)
+                    blocks_written = 0
+                    blocks_skipped = 0
+
                 if changed is True and next_save_time is not None and int(time.time()) > next_save_time:
                     progress.console.print("saving digest to disk.")
                     digest_save(digest_save_name, remote_digest_list)
@@ -267,6 +276,7 @@ def bscp_main(
     hashname: str = typer.Option('sha256'),
     digest_save_name: str = typer.Option(None),
     digest_interval_save: int = typer.Option(200, help="Save digest every X seconds to disk"),
+    update_progress_interval: int = typer.Option(30, help="Update progress interval every X seconds"),
     skip_remote_digest: bool = typer.Option(False, "--skip-remote-digest", "-s", help="Skip remote digest initial scan, copy all block's to start with"),
     skip_remote_final_digest: bool = typer.Option(False, "--skip-remote-final-digest", "-f", help="Skip remote digest initial scan, copy all block's to start with"),
     debug: bool = typer.Option(False, "--debug", "-d", help="Debug mode"),
@@ -289,6 +299,7 @@ def bscp_main(
         skip_remote_final_digest=skip_remote_final_digest,
         digest_save_name=digest_save_name,
         digest_interval_save=digest_interval_save,
+        update_progress_interval=update_progress_interval,
     )
     speedup = size * 1.0 / (in_total + out_total)
     sys.stderr.write('in=%i out=%i size=%i speedup=%.2f\n' % (in_total, out_total, size, speedup))
