@@ -15,6 +15,7 @@
 # ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 # OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
+import pyximport; pyximport.install()
 import typer
 import hashlib
 import struct
@@ -129,19 +130,32 @@ class IOCounter:
         self.out_stream.flush()
 
 
-def digest_save(filename, digest):
+def digest_save(filename, digest, position=0, idx=0):
+    my_dict = {
+        'digest': digest,
+        'position': position,
+        'idx': idx,
+    }
     with open(filename, "wb") as outfile:
         pickle.dump(digest, outfile)
+    with open(filename+".v2", "wb") as outfile:
+        pickle.dump(my_dict, outfile)
 
 
 def digest_load(filename):
     digest = None
     try:
+        with open(filename+".v2", "rb") as infile:
+            my_dict = pickle.loads(infile.read())
+            return (my_dict['digest'], my_dict['position'], my_dict['idx'])
+    except FileNotFoundError:
+        pass
+    try:
         with open(filename, "rb") as infile:
             digest = pickle.loads(infile.read())
     except FileNotFoundError:
         return None
-    return digest
+    return (digest, 0, 0)
 
 
 def bscp(local_filename,
@@ -164,13 +178,16 @@ def bscp(local_filename,
         f.seek(0, 2)
         size = f.tell()
         f.seek(0)
+        start_position=0
+        start_idx=0
 
         # Calculate number of blocks, including the last block which may be smaller
         blockcount = int((size + blocksize - 1) / blocksize)
         if digest_save_name is not None and skip_remote_digest is False:
-            remote_digest_list = digest_load(digest_save_name)
+            (remote_digest_list, start_position, start_idx) = digest_load(digest_save_name)
             if remote_digest_list is not None:
                 skip_remote_digest = True
+        f.seek(start_position)
 
         remote_command = 'python -c "%s"' % (remote_script,)
         if remote_host == 'local':
@@ -212,20 +229,28 @@ def bscp(local_filename,
 
         if digest_save_name is not None:
             digest_save(digest_save_name, remote_digest_list)
-            next_save_time = time.time() + digest_interval_save
+            next_save_time = int(time.time()) + digest_interval_save
         else:
             next_save_time = None
         changed = False
 
-        next_progress_time = time.time()
+        next_progress_time = int(time.time())
         blocks_written = 0
         blocks_skipped = 0
+        if start_position > 0:
+            print(f"starting from position: {start_position} / index: {start_idx} from {len(remote_digest_list)}")
+            if skip_remote_final_digest is False:
+                skip_remote_final_digest = True
+                print("skipping remote final digest, because not starting from position 0")
         with Progress() as progress:
             task1 = progress.add_task("[cyan]Total...", total=len(remote_digest_list))
             task2 = progress.add_task("[green]Written...", total=len(remote_digest_list))
             task3 = progress.add_task("[yellow]Skipped...", total=len(remote_digest_list))
 
             for idx, remote_digest in enumerate(remote_digest_list):
+                if idx < start_idx:
+                    blocks_skipped += 1
+                    continue
                 position = f.tell()
                 pos_location=pos_location+1
 
@@ -248,15 +273,20 @@ def bscp(local_filename,
                     progress.update(task1, advance=(blocks_written + blocks_skipped))
                     progress.update(task2, advance=blocks_written)
                     progress.update(task3, advance=blocks_skipped)
+                    progress.console.print(f"skipped {blocks_skipped}, written {blocks_written}.")
                     blocks_written = 0
                     blocks_skipped = 0
 
-                if changed is True and next_save_time is not None and int(time.time()) > next_save_time:
-                    progress.console.print("saving digest to disk.")
-                    digest_save(digest_save_name, remote_digest_list)
+                #if changed is True and next_save_time is not None and int(time.time()) > next_save_time:
+                if next_save_time is not None and int(time.time()) > next_save_time:
+                    progress.console.print(f"saving digest to disk: {time.strftime('%H:%M:%S', time.localtime())}")
+                    digest_save(digest_save_name, remote_digest_list, position=position, idx=idx)
                     next_save_time = time.time() + digest_interval_save
                     changed = False
 
+            progress.update(task1, advance=(blocks_written + blocks_skipped))
+            progress.update(task2, advance=blocks_written)
+            progress.update(task3, advance=blocks_skipped)
         p.stdin.close()
         if digest_save_name is not None:
             digest_save(digest_save_name, remote_digest_list)
