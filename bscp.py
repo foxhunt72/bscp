@@ -154,7 +154,7 @@ def digest_load(filename):
         with open(filename, "rb") as infile:
             digest = pickle.loads(infile.read())
     except FileNotFoundError:
-        return None
+        pass
     return (digest, 0, 0)
 
 
