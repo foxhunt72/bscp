@@ -42,3 +42,4 @@ workdir
 *.log
 README.rst~
 run.sh
+run2.sh

@@ -169,6 +169,7 @@ def bscp(local_filename,
          digest_save_name=None,
          digest_interval_save=600,
          update_progress_interval=30,
+         config_map={},
     ):
     remote_filename_bytes = remote_filename.encode('utf-8')
     hashname_bytes = hashname.encode('ascii')
@@ -195,6 +196,10 @@ def bscp(local_filename,
         else:
            command = ('ssh', '--', remote_host, remote_command)
 
+        if config_map.get("remote_info_only", False) is True:
+            print(f"python ./bscp_remote_only.py '{remote_filename}' '{hashname}' {size} {blocksize} <output_filename>")
+            exit(0)
+
         p = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=None)
         io = IOCounter(p.stdout, p.stdin)
 
@@ -219,6 +224,7 @@ def bscp(local_filename,
             with typer.progressbar(range(send_blockcount)) as progress:
                 remote_digest_list = [io.read(hash_total.digest_size) for i in progress]
             sys.stderr.write('ready remote digest.\n')
+
 
         if debug is True:
             pprint(remote_digest_list)
@@ -310,6 +316,7 @@ def bscp_main(
     skip_remote_digest: bool = typer.Option(False, "--skip-remote-digest", "-s", help="Skip remote digest initial scan, copy all block's to start with"),
     skip_remote_final_digest: bool = typer.Option(False, "--skip-remote-final-digest", "-f", help="Skip remote digest initial scan, copy all block's to start with"),
     debug: bool = typer.Option(False, "--debug", "-d", help="Debug mode"),
+    remote_info_only: bool = typer.Option(False, "--remote-info-only", help="Get info for remote seperate run for digest."),
 ):
     try:
         (remote_host, remote_filename) = remote.split(":")
@@ -317,6 +324,9 @@ def bscp_main(
         print("remote needs to be:   <hostname>:<blockdevice>")
         print("or                :   local:<blockdevice>")
         sys.exit(1)
+
+    config_map = dict()
+    config_map['remote_info_only'] = remote_info_only
 
     (in_total, out_total, size) = bscp(
         local_filename,
@@ -330,6 +340,7 @@ def bscp_main(
         digest_save_name=digest_save_name,
         digest_interval_save=digest_interval_save,
         update_progress_interval=update_progress_interval,
+        config_map=config_map,
     )
     speedup = size * 1.0 / (in_total + out_total)
     sys.stderr.write('in=%i out=%i size=%i speedup=%.2f\n' % (in_total, out_total, size, speedup))
