@@ -58,6 +58,7 @@ def bscp_remote_only(filename, hashname, size, blocksize, output_filename):
             remote_digest_list.append(digest)
             readremain -= rblocksize
             if readremain == 0:
+                break
     digest_save(output_filename, remote_digest_list)
 
 if __name__ == '__main__':
